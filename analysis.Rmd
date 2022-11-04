@@ -11,13 +11,57 @@ output: pdf_document
 ## a) Import Data 
 First, we want to read in our data. 
 
+```{r}
+library(RCurl) 
+data <- read.csv(text = getURL("https://raw.githubusercontent.com/kanikadchopra/Parkinsons-Prediction/main/parkinson_data.csv"))
+```
+
+```{r}
+attach(data)
+```
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+dim(data)
+```
+
+```{r}
+glimpse(data)
+```
+
 ## b) Missing Values
 Next, we want to conduct a few quick quality checks, such as checking if there are any missing values. 
+```{r}
+data %>% summarise_all(~ sum(is.na(.)))
+```
 
-* How many?
-* How will you handle them in the analysis?
+We can see that we have zero missing values along all of our columns which is good news as we don't have to handle them in the analysis. 
 
 ## c) Preliminary Plots
+
+First, let's look at our predictor variable.
+```{r}
+barplot(table(status), xlab='Status', ylab='Frequency')
+```
+
+Firstly, we can see that our data is skewed in that we have more data on patients with Parkinson's (`status=1`) than patients who do not have Parkinson's (`status=0`).
+
+Next, we look at some of our variables
+
+```{r}
+boxplot(status, data$MDVP.Fo.Hz)
+boxplot(status, data$MDVP.Fhi.Hz)
+boxplot(status, )
+```
+
+
+```{r}
+pairs(data[-c(1)])
+```
+
 
 * Histograms, boxplots, scatterplots, comment on anomalies
 
