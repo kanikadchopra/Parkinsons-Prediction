@@ -1,0 +1,30 @@
+---
+title: "Preliminary Analysis"
+author: "Kanika Chopra"
+date: "2022-11-03"
+output: pdf_document
+---
+
+# Predicting Parkinson's Based on Auditory Data 
+
+
+## a) Import Data 
+First, we want to read in our data. 
+
+## b) Missing Values
+Next, we want to conduct a few quick quality checks, such as checking if there are any missing values. 
+
+* How many?
+* How will you handle them in the analysis?
+
+## c) Preliminary Plots
+
+* Histograms, boxplots, scatterplots, comment on anomalies
+
+* Pairs plot
+* box plot against the predictor
+
+
+
+
+
