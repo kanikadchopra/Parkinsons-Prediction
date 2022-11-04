@@ -7,13 +7,13 @@ output: pdf_document
 
 # Predicting Parkinson's Based on Auditory Data 
 
-
 ## a) Import Data 
 First, we want to read in our data. 
 
 ```{r}
 library(RCurl) 
-data <- read.csv(text = getURL("https://raw.githubusercontent.com/kanikadchopra/Parkinsons-Prediction/main/parkinson_data.csv"))
+data <- read.csv(text = getURL(
+  "https://raw.githubusercontent.com/kanikadchopra/Parkinsons-Prediction/main/parkinson_data.csv"))
 ```
 
 ```{r}
@@ -49,26 +49,32 @@ barplot(table(status), xlab='Status', ylab='Frequency')
 
 Firstly, we can see that our data is skewed in that we have more data on patients with Parkinson's (`status=1`) than patients who do not have Parkinson's (`status=0`).
 
-Next, we look at some of our variables
+Next, we look at some of our variables for a preliminary analysis. We pick a few of our variables to investigate: 
 
 ```{r}
-boxplot(status, data$MDVP.Fo.Hz)
-boxplot(status, data$MDVP.Fhi.Hz)
-boxplot(status, )
+plot(status, data$MDVP.Fo.Hz)
 ```
 
+We have a higher distribution of MDVP values when we have status=0 so no Parkinson's. 
 
 ```{r}
-pairs(data[-c(1)])
+plot(status, DFA)
 ```
 
+We see higher DFA values concentrated for when status=1 (Parkinson's) 
 
-* Histograms, boxplots, scatterplots, comment on anomalies
+```{r}
+plot(status, data$RPDE)
+```
 
-* Pairs plot
-* box plot against the predictor
+```{r}
+plot(status, data$D2)
+```
 
+For D2 and RPDE, we see a higher distribution of values for patients with Parkinson's. 
 
+```{r}
+plot(status, data$NHR)
+```
 
-
-
+For NHR, healthy patients seem to have a concentrated low value whereas patients with Parkinson's seem to have some values spread out with higher NHRs. There may be some anomalies here with the values higher than 0.2 for NHR.
