@@ -1,0 +1,487 @@
+---
+title: "Predicting Parkinson's Based on Auditory Data"
+author: "Kanika Chopra"
+date: "2022-12-14"
+output: pdf_document
+---
+
+```{r echo=FALSE}
+defaultW <- getOption("warn")
+options(warn = -1)
+```
+
+The scientific question of this project is to predict whether the patient has Parkinson’s disease using patient's vocal features.
+
+## Import Data 
+First, we want to read in our data. 
+
+```{r}
+library(RCurl) 
+data <- read.csv(text = getURL(
+  "https://raw.githubusercontent.com/kanikadchopra/Parkinsons-Prediction/main/parkinson_data.csv"))
+```
+
+This is a multivariate dataset with data from June 26, 2008. 
+
+```{r}
+attach(data)
+```
+
+## Exploratory Data Analysis
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+Let's take a look at the dimensions of our data.
+```{r}
+dim(data)
+```
+
+We are working with 195 records with 24 attributes. 
+```{r}
+glimpse(data)
+```
+
+Taking a glimpse at our data, we can see that one column corresponds to the ASCII subject name and recording number. Status is our response variable and is binary. The remainder of our values are all continuous variables.
+
+### Missing Data
+
+Next, we want to conduct a few quick quality checks, such as checking if there are any missing values. 
+```{r}
+data %>% summarise_all(~ sum(is.na(.)))
+```
+We can see that we have zero missing values along all of our columns which is good news as we don't have to handle them in the analysis. 
+
+### Preliminary Plots
+
+```{r}
+data %>% 
+  group_by(status) %>% 
+  count()
+```
+
+Firstly, we can see that our data is skewed in that we have more data on patients with Parkinson's (`status=1`) than patients who do not have Parkinson's (`status=0`). We are working with imbalanced data in this case so that will be important to keep in mind. Let's plot this as a bar plot as well. 
+```{r}
+data$status <- factor(data$status)
+data %>% 
+  group_by(status) %>%
+  count() %>%
+  ggplot(., aes(x=status, y=n, fill=n)) +
+  geom_bar(stat="identity", fill='#4169E1') +
+  ggtitle("Distribution of patients with and without Parkinson's") +
+  labs(y="Parkinson's Disease", x="Number of patients")
+```
+We'll explore the boxplots of our variables in comparison to status. 
+
+```{r results='hide', fig.keep='all'}
+data %>% 
+  dplyr::select(-contains("name")) %>%
+  gather(-status, key='var', value='value') %>%
+  ggplot(aes(x=status, y=value, outlier.color='red')) + 
+  geom_boxplot() +
+  facet_wrap(~ var) +
+  labs(title = "Distribution of speech signals based on Parkinson's Disease", 
+       x = "Parkinson's Disease",
+       y = "Speech signals")
+```
+
+From our plot we can see that our measurements are higher for Parkinson's disease for most variables except for HNR and MDVP.Hz (Fhi, Flo, Fo). In general, it seems that those with Parkinson's disease have a higher speech measurement. We can also see some potential outliers in the data; however, given that our data set is small, we do not remove these values as these may not be outliers if more data was provided. 
+
+## Data Cleaning and Transformation
+```{r}
+library(dplyr)
+```
+
+
+We can start by dropping the name column from our dataframe. 
+```{r}
+data <- data %>% 
+  dplyr::select(-contains("name"))
+```
+
+Next, we check the correlation between the variables.
+```{r}
+library(corrr)
+```
+
+```{r}
+data %>% correlate() 
+```
+
+This is harder to see numerically so we plot a heatmap of the correlation values. We take the absolute value of the correlation plot to make it easier to notice which variables are correlated with one another. 
+
+```{r}
+library(reshape2)
+```
+
+```{r}
+data %>%
+  correlate() %>%
+  melt(.) %>%
+  mutate(
+    value2 = abs(value)) %>%
+  ggplot(., aes(x=term, y=variable, fill=value2)) + 
+  geom_tile(color = "white",
+            lwd = 1.5,
+            linetype = 1) + theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_gradient(low = "white", high = "#4169E1") + coord_fixed() +
+  ggtitle('Correlation between predictor variables')
+```
+We can see a lot of correlated variables. We note that `status` does not have a high correlation with any of the values. To get a subset of variables that we should drop due to multicollinearity issues, we take a look at a subset of our data, i.e. correlations that are greater than 0.5 in absolute value. 
+
+```{r}
+correlations = melt(correlate(data))
+correlations$value <- abs(correlations$value)
+
+correlations[correlations$value > 0.6, ]
+```
+
+We note that the following variables have high correlations with multiple other variables: 
+
+* `MDVP.Jitter...`
+* `MDVP.Jitter.Abs`
+* `MDVP.RAP`
+* `MDVP.PPQ`
+* `Jitter.DDP`
+* `MDVP.Shimmer`
+* `MDVP.Shimmer.db`
+* `Shimmer.APQ3`
+* `Shimmer.APQ5`
+* `MDVP.APQ`
+* `Shimmer.DDA`
+* `NHR`
+* `HNR` 
+* `spread1`
+* `PPE`
+
+Note that Jitter and Shimmer variables are highly correlated. This leaves us with 7 variables to work with which are (MDVP.Fo.Hz, MDVP.Fhi.Hz, MVDP.Flo.Hz, RPDE, DFA, spread2, D2) and then our status variable
+
+This is important because to fit a logistic regression model, we are assuming there is no multicollinearity otherwise we would have high errors with the predictors. Next, we notice that we have a differing ranges of values for each category so we normalize our variables so that scale does not influence our prediction.
+
+```{r}
+keep_variables <- c("MDVP.Fo.Hz.","MDVP.Fhi.Hz.", "MDVP.Flo.Hz.", "RPDE", "DFA", "spread2", "D2")
+```
+
+```{r}
+x <- data %>%
+  dplyr::select(all_of(keep_variables)) %>%
+  scale(.)
+
+x <- data.frame(x)
+y <- data$status
+```
+
+```{r}
+summary(x)
+```
+
+We can now see that we have a mean of 0 across all of our variables.
+
+Thus, we are now ready to build our logistic regression model.
+
+## Model Building
+
+We want to first split our data into training and testing sets. 
+
+```{r}
+library(caret)
+```
+
+```{r}
+set.seed(225)
+idx <- x$spread2 %>% createDataPartition(p=0.8, list=FALSE)
+
+train.data <- x[idx, ]
+test.data <- x[-idx,]
+
+train.y <- y[idx]
+test.y <- y[-idx]
+
+train <- data.frame(train.data, status=train.y)
+```
+
+It is important to note that we do not have a very large sample size but are working with 159 variables in our training data set. Hence, increasing our sample size would aid with fitting a more reliable model but that is a limitation with the scope of this project. 
+
+To build our model, we will use multiple methods to choose our best model. The first being LRT with `drop1`. Then, we will look at the significant factors with our full model and use stepAIC for alternative methods.
+
+### LRT 
+
+For this method, we'll include interaction effects to see if they are significant. We only include interaction terms of interest, i.e. the interaction between `MDVP.Fo.Hz.` and `MDVP.Fhi.Hz.` and `MDVP.Flo.Hz.` would not be relevant. We choose to use `MDVP.Fo.Hz.` to include with the interaction terms with the other variables. 
+```{r}
+inter.model <- glm(status ~ . + (MDVP.Fo.Hz. + RPDE + DFA + spread2 + D2)^2, data=train, 
+                   family=binomial)
+```
+
+```{r}
+drop1(inter.model, test='LRT')
+```
+
+We see in the first iteration that none of the interaction terms are significant except for `RPDE:DFA`. We drop the interaction term for `RPDE:spread1` since it has the largest p-value.
+
+
+```{r}
+inter.model <- update(inter.model, .~. - RPDE:DFA)
+drop1(inter.model, test='LRT')
+```
+
+Next, we move remove the interaction effect for `RPDE:spread2`. 
+```{r}
+inter.model <- update(inter.model, .~. - RPDE:spread2)
+drop1(inter.model, test='LRT')
+```
+
+Next, we move remove the interaction effect for `MDVP.Fo.Hz.:spread2`. 
+```{r}
+inter.model <- update(inter.model, .~. - MDVP.Fo.Hz.:spread2)
+drop1(inter.model, test='LRT')
+```
+
+Next, we move remove the interaction effect for `MDVP.Fo.Hz.:DFA `. 
+```{r}
+inter.model <- update(inter.model, .~. - MDVP.Fo.Hz.:DFA)
+drop1(inter.model, test='LRT')
+```
+
+We continue with this process as we are now seeing some significant interaction effects. We remove `MDVP.Fo.Hz.:RPDE `. 
+```{r}
+inter.model <- update(inter.model, .~. - MDVP.Fo.Hz.:RPDE)
+drop1(inter.model, test='LRT')
+```
+
+Next, we move remove the interaction effect for `DFA:D2`. 
+```{r}
+inter.model <- update(inter.model, .~. - DFA:D2)
+drop1(inter.model, test='LRT')
+```
+
+Next, we move remove the main effect for `MDVP.Fhi.Hz.`. We continue to also check the summary of the model to see if the standard errors have inflated. However, our estimates and standard errors are still relatively low. 
+```{r}
+inter.model <- update(inter.model, .~. - MDVP.Fhi.Hz.)
+drop1(inter.model, test='LRT')
+```
+
+```{r}
+inter.model <- update(inter.model, .~. - MDVP.Flo.Hz.)
+drop1(inter.model, test='LRT')
+```
+
+```{r}
+inter.model <- update(inter.model, .~. - spread2:D2)
+drop1(inter.model, test='LRT')
+```
+
+```{r}
+inter.model <- update(inter.model, .~. - DFA:spread2)
+drop1(inter.model, test='LRT')
+```
+
+```{r}
+inter.model <- update(inter.model, .~. - RPDE:D2)
+drop1(inter.model, test='LRT')
+```
+
+```{r}
+inter.model <- update(inter.model, .~. - RPDE)
+drop1(inter.model, test='LRT')
+```
+
+
+The last interaction term we drop is `MDVP.Fo.Hz.:D2 `. It appears that none of our interaction terms were significant.
+```{r}
+inter.model <- update(inter.model, .~. - MDVP.Fo.Hz.:D2)
+drop1(inter.model, test='LRT')
+```
+
+```{r}
+summary(inter.model)
+```
+
+We can see that we do not have high standard errors and beta estimates. We also have all significant main effects left in our model so our final model is `inter.model`.
+
+### Full Model Analysis
+
+Firstly, we take a look at our full model to see which variables are significant. 
+```{r}
+full.model <- glm(status  ~ ., data=train, family=binomial)
+summary(full.model)
+```
+
+
+We also observe that we have that `DFA`, `spread2` and `D2` and our intercept are our variables that are statistically significant.  We retrain `model1` based on these significant features.
+```{r}
+model1 <- glm(status  ~ DFA + spread2 + D2, data=train, family=binomial)
+```
+
+### Stepwise AIC
+
+We use stepwise AIC with backwards selection to create an alternative model and see if our final models are similar. We also allow for interaction terms using the `scope` parameter.
+
+```{r}
+library(MASS)
+```
+
+```{r}
+step.model <- full.model %>% stepAIC(trace=TRUE, scope = . ~ .^2, direction='backward')
+```
+
+
+From here, we have that `MDVP.Fo.Hz.` + `DFA` + `spread2` + `D2` are significant variables. We can test which of these two models is preferred. 
+```{r}
+model2 <- glm(status  ~ MDVP.Fo.Hz. + DFA + spread2 + D2, data=train, family=binomial)
+```
+
+## Analysis 
+
+### Model Comparison
+
+First, we compare `model1` and `model2` against the `full.model` using an ANOVA test since these models are nested. This will help us to decide which model fits the data better. 
+
+```{r}
+anova(model1, full.model)
+```
+
+Then, we run a chi-squared test to determine which is a better fit.
+```{r}
+pchisq(deviance(model1) - deviance(full.model), df.residual(model1) - df.residual(full.model))
+```
+
+We have a high p-value meaning that we do not have evidence to reject our null hypothesis that `model1` is a better fit than `full.model`. Thus, since `model1` is simpler, we prefer this over our `full.model`. 
+
+```{r}
+anova(model2, full.model)
+```
+
+```{r}
+pchisq(deviance(model2) - deviance(full.model), df.residual(model2) - df.residual(full.model))
+```
+
+Again, we have a high p-value meaning that we do not have evidence to reject our null hypothesis that `model2` is a better fit than `full.model`. Thus, since `model2` is simpler, we prefer this over our `full.model`. 
+
+Next, we compare `model1` vs. `model2`.
+```{r}
+anova(model1, model2)
+```
+
+```{r}
+pchisq(deviance(model1) - deviance(model2), df.residual(model1) - df.residual(model2))
+```
+
+Again, we have a high p-value so the two models are equivalently good at capturing meaningful information from the data. Now, since our stepAIC and LRT methods both resulted in `model2`, we decide to use this as our final model. 
+
+### Diagnostic Plots
+
+Now, we want to check the logistic regression assumptions with our final model. This is used to verify that the logistic regression model is a good fit to our data in addition to using step AIC. These include:
+1. Linearity assumption
+2. Lack of strongly influential outliers
+3. Absence of Multicollinearity
+
+**Linearity Assumption**
+```{r}
+# Get our logit values
+predictors <- c('MDVP.Fo.Hz.', 'DFA', 'spread2', 'D2')
+
+probabilities <- predict(model1, type = "response")
+
+model.x <- train.data %>% 
+  dplyr::select(all_of(predictors)) %>%
+  mutate(logit=log(probabilities/(1-probabilities))) %>%
+  gather(key="predictors", value="predictor.value", -logit)
+```
+
+
+```{r}
+ggplot(model.x, aes(logit, predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") + 
+  theme_bw() + 
+  facet_wrap(~predictors, scales = "free_y") +
+  labs(y="Logit", x="Predictor Value")
+```
+We see that the smoothing curve of MDVP.Fo.Hz., D2, DFA, and spread2 are relatively linear. `MDVP.Fo.Hz.` may be better transformed by a polynomial but for our purposes, we do not add further polynomial terms into our model to avoid multicollinearity. Next, we check for outliers.
+
+**Influential Values**
+
+We check for these values since they can alter the quality of our model using Cook's distance plot. 
+```{r}
+plot(model2, which = 4, id.n = 3)
+```
+
+To check whether the indices 49, 52 and 169 are influential observations, we need to check their standardized residual error. 
+```{r}
+library(broom)
+```
+
+```{r}
+model2.data <- augment(model2) %>% mutate(index= 1:n())
+```
+
+The top 3 values based on Cook's distance are:
+```{r}
+model2.data %>% top_n(3, .cooksd)
+```
+
+This gives us our information on the outliers that we saw in the Cook's distance plot. Then, we check if any of the standardized residuals are greater than 3.
+
+```{r}
+model2.data %>% filter(abs(.std.resid) > 3)
+```
+
+None of our variables have standard residuals outside of the (-3, 3) range; hence, we have no influential observations in our data. Another plot to check for outlieres is to use the jackman knife plot.
+
+```{r}
+library(faraway)
+```
+
+```{r}
+halfnorm(rstudent(model2), main='Jackknife Half-Normal Plot')
+```
+
+We check if 41 and 42 have high standardized residuals.
+```{r}
+model2.data[model2.data$.rownames == 41,]$.std.resid
+model2.data[model2.data$.rownames == 42,]$.std.resid
+```
+
+Again, we do not have large standardized residuals so these are not outliers. Lastly, we dealt with multicollinearity earlier by removing variables that were highly correlated with one another. We will do another check to ensure our logistic regression model holds.
+
+**Multicollinearity**
+```{r}
+car::vif(model2)
+```
+
+We are checking the variance inflation factor (VIF) which measures the strength of correlation between independent variables in a regression analysis. In this case, our VIF values are relatively low (close to 1) so we do not have a multicollinearity issue.
+
+Lastly, we take a look at the exponentiation of our coefficients to understand the statistical significance and effect they have on distinguishing PD.
+
+```{r}
+exp(summary(model2)$coefficients[, 'Estimate'])
+```
+
+Hence, we see that for every scenario, a one unit increase in the speech signal increases the odds ratio of having PD. We can also get the 95% confidence interval of these estimates.
+```{r}
+exp(confint(model2))
+```
+
+### Model Assessment
+Now that we have validated that the logistic regression model is adequate, we report a few metrics to assess the performance of our model. We begin by predicting on our testing data. 
+
+```{r}
+pred <- predict(model2, newdata=test.data, type='response')
+pred_class <- as.integer(pred >= 0.5)
+```
+
+Then, since we are building a classification model, we take a look at our confusion matrix. We also want to calculate precision, recall, and f1-score for our model.
+```{r}
+library(caret)
+```
+
+```{r}
+confusionMatrix(data=factor(pred_class), reference=factor(test.y), mode='prec_recall', positive="1")
+```
+
+Looking at our confusion matrix, we do have a decent number of correct predictions. However, we note that we do predict 1 when the expected value is 0 a total of 7 times which is larger than the number of correct predictions for 0. This is likely due to our imbalanced data as our model is more familiar with the data corresponding to an expected value of 1. 
+
+We can also see that we have a good recall score, and a decent precision and f1-score. This aligns with what our confusion matrix showed us that our classifier is good at predicting Parkinson's cases but not those without Parkinson's. 
+
+Future extensions could include training a SVM model or alternative classifiers to improve the accuracy of this predictor. 
